@@ -1,0 +1,135 @@
+---
+title: Github Actions
+description: Github Actionsの設定
+---
+
+## 1. yamlファイルの配置
+
+以下のファイルをプロジェクトのルートディレクトリに配置します。
+
+ `.github/workflows/sync-to-docs.yml`
+ `.github/workflows/sync-from-docs.yml`
+```sync-to-docs.yml
+# development-docsへの同期(プッシュイベント時のみ実行)
+# project >>> development-docs
+name: development-docsへの同期
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/src/content/docs/common/**'  # 監視パスを修正
+  workflow_dispatch:  # 手動実行用トリガーを追加
+
+jobs:
+  sync-to-development-docs:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'  # 条件を修正
+
+    steps:
+    - name: Checkout current project
+      uses: actions/checkout@v4
+
+    - name: Checkout development-docs
+      uses: actions/checkout@v4
+      with:
+        repository: otomatty/development-docs
+        path: development-docs
+        token: ${{ secrets.DOCS_PAT }}
+
+    - name: Sync changes to development-docs
+      run: |
+        # 同期元と同期先のディレクトリを確認
+        if [ ! -d "./docs/src/content/docs/common" ]; then
+          echo "Source directory does not exist"
+          exit 1
+        fi
+
+        # development-docsの対象ディレクトリを作成
+        mkdir -p ./development-docs/src/content/docs
+
+        # rsyncで同期（common以外のファイルは保持）
+        rsync -av --delete \
+          --exclude='**/!common/**' \
+          ./docs/src/content/docs/common/ ./development-docs/src/content/docs/
+
+        # 変更をコミット
+        cd development-docs
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        
+        git add .
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+
+        git commit -m "sync: Update from ${GITHUB_REPOSITORY} (${GITHUB_SHA})"
+        git push
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf development-docs
+```
+
+```sync-from-docs.yml
+# development-docsからの同期 (毎日UTC 0:00に実行)
+# development-docs >>> project
+name: development-docsからの同期
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 毎日 UTC 0:00 (JST 9:00) に実行
+  workflow_dispatch:  # 手動実行用
+
+jobs:
+  sync-from-development-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout current project
+      uses: actions/checkout@v4
+
+    - name: Checkout development-docs
+      uses: actions/checkout@v4
+      with:
+        repository: otomatty/development-docs
+        path: development-docs
+        token: ${{ secrets.DOCS_PAT }}
+
+    - name: Sync changes from development-docs
+      run: |
+        # development-docsの同期元ディレクトリを確認
+        if [ ! -d "./development-docs/src/content/docs" ]; then
+          echo "Source directory does not exist in development-docs"
+          exit 1
+        fi
+
+        # 現在のプロジェクトの対象ディレクトリを作成
+        mkdir -p ./docs/src/content/docs/common
+
+        # rsyncで同期（common以外のファイルは除外）
+        rsync -av --delete \
+          --exclude='**/common/**' \
+          ./development-docs/src/content/docs/ ./docs/src/content/docs/common/
+
+        # 変更をコミット
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        
+        git add .
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+
+        git commit -m "sync: Update from development-docs (${GITHUB_SHA})"
+        git push
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf development-docs
+```
