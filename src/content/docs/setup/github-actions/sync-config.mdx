@@ -6,5 +6,244 @@ description: Github Actionsの設定
 
 以下のファイルをプロジェクトのルートディレクトリに配置します。
 
- `.github/workflows/sync-to-docs.yml`
- `.github/workflows/sync-from-docs.yml`
+`.github/workflows/sync-config-section-to-docs.yml`
+`.github/workflows/sync-config-section-from-docs.yml`
+
+```sync-config-section-to-docs.yml
+name: astro.config.mjs共通セクション同期
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/astro.config.mjs'
+  workflow_dispatch:
+
+jobs:
+  sync-config-section:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout current project
+      uses: actions/checkout@v4
+
+    - name: Checkout development-docs
+      uses: actions/checkout@v4
+      with:
+        repository: otomatty/development-docs
+        path: temp-docs
+        token: ${{ secrets.DOCS_PAT }}
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Create sync script
+      run: |
+        cat > sync_config_section.py << 'EOL'
+        import re
+        import sys
+        import os
+
+        def ensure_file_exists(file_path):
+            directory = os.path.dirname(file_path)
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+            if not os.path.exists(file_path):
+                with open(file_path, 'w') as f:
+                    f.write('// @sync-start: common-section\n// @sync-end: common-section\n')
+
+        def extract_section(content):
+            pattern = r'// @sync-start: common-section\n(.*?)// @sync-end: common-section'
+            match = re.search(pattern, content, re.DOTALL)
+            return match.group(1) if match else None
+
+        def update_section(file_path, new_section):
+            ensure_file_exists(file_path)
+            
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            if '// @sync-start: common-section' not in content:
+                content = '// @sync-start: common-section\n// @sync-end: common-section\n' + content
+
+            updated_content = re.sub(
+                r'// @sync-start: common-section\n.*?// @sync-end: common-section',
+                f'// @sync-start: common-section\n{new_section}// @sync-end: common-section',
+                content,
+                flags=re.DOTALL
+            )
+            
+            with open(file_path, 'w') as f:
+                f.write(updated_content)
+
+        def sync_sections(source_path, target_path):
+            if not os.path.exists(source_path):
+                print(f"Source file not found: {source_path}")
+                return False
+
+            with open(source_path, 'r') as f:
+                source_content = f.read()
+            
+            section = extract_section(source_content)
+            if section:
+                update_section(target_path, section)
+                return True
+            return False
+
+        if __name__ == "__main__":
+            source_path = sys.argv[1]
+            target_path = sys.argv[2]
+            success = sync_sections(source_path, target_path)
+            sys.exit(0 if success else 1)
+        EOL
+
+    - name: Sync section to development-docs
+      run: |
+        echo "Source file location:"
+        ls -la ./docs/astro.config.mjs
+        echo "Target repository structure:"
+        ls -la ./temp-docs/
+
+        python sync_config_section.py \
+          "./docs/astro.config.mjs" \
+          "./temp-docs/astro.config.mjs"
+
+        cd temp-docs
+        if git diff --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add astro.config.mjs
+        git commit -m "sync: Update common section in astro.config.mjs"
+        git push
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf temp-docs
+```
+
+
+ ```sync-config-section-from-docs.yml
+ # TODO: development-docsでの変更を監視して、projectへの同期を行うようにしたい
+
+name: development-docsからastro.config.mjs共通セクション同期
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-from-development-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout current project
+      uses: actions/checkout@v4
+
+    - name: Checkout development-docs
+      uses: actions/checkout@v4
+      with:
+        repository: otomatty/development-docs
+        path: temp-docs
+        token: ${{ secrets.DOCS_PAT }}
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Create sync script
+      run: |
+        cat > sync_config_section.py << 'EOL'
+        import re
+        import sys
+        import os
+
+        def ensure_file_exists(file_path):
+            directory = os.path.dirname(file_path)
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+            if not os.path.exists(file_path):
+                with open(file_path, 'w') as f:
+                    f.write('// @sync-start: common-section\n// @sync-end: common-section\n')
+
+        def extract_section(content):
+            pattern = r'// @sync-start: common-section\n(.*?)// @sync-end: common-section'
+            match = re.search(pattern, content, re.DOTALL)
+            return match.group(1) if match else None
+
+        def update_section(file_path, new_section):
+            ensure_file_exists(file_path)
+            
+            with open(file_path, 'r') as f:
+                content = f.read()
+            
+            if '// @sync-start: common-section' not in content:
+                content = '// @sync-start: common-section\n// @sync-end: common-section\n' + content
+
+            updated_content = re.sub(
+                r'// @sync-start: common-section\n.*?// @sync-end: common-section',
+                f'// @sync-start: common-section\n{new_section}// @sync-end: common-section',
+                content,
+                flags=re.DOTALL
+            )
+            
+            with open(file_path, 'w') as f:
+                f.write(updated_content)
+
+        def sync_sections(source_path, target_path):
+            if not os.path.exists(source_path):
+                print(f"Source file not found: {source_path}")
+                return False
+
+            with open(source_path, 'r') as f:
+                source_content = f.read()
+            
+            section = extract_section(source_content)
+            if section:
+                update_section(target_path, section)
+                return True
+            return False
+
+        if __name__ == "__main__":
+            source_path = sys.argv[1]
+            target_path = sys.argv[2]
+            success = sync_sections(source_path, target_path)
+            sys.exit(0 if success else 1)
+        EOL
+
+    - name: Sync section from development-docs
+      run: |
+        echo "Source file location:"
+        ls -la ./temp-docs/
+        echo "Target file location:"
+        ls -la ./docs/
+
+        python sync_config_section.py \
+          "./temp-docs/astro.config.mjs" \
+          "./docs/astro.config.mjs"
+
+        if git diff --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'actions@github.com'
+        git add docs/astro.config.mjs
+        git commit -m "sync: Update common section from development-docs"
+        git push
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -rf temp-docs
+```
